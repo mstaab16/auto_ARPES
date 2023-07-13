@@ -1,0 +1,7 @@
+{"type": "InitMessage", "msg": "", "search_axes": [{"name": "x", "min": -1.0, "max": 1.0, "step": 0.01}, {"name": "y", "min": -1.0, "max": 1.0, "step": 0.025}], "data_formats": [{"name": "ARPES", "shape": [2, 2], "offset": [74.0, -15.0], "delta": [0.05, 0.1], "dtype": "float32"}]}
+{"type": "DataMessage", "msg": "", "format_name": "ARPES", "data": [[0.5200640528764731, 0.8145041269984631], [0.8842665431870184, 0.9015664820189974]]}
+{"type": "QueryMessage", "msg": "query"}
+{"type": "MoveResponse", "msg": "", "axes_to_move": ["x", "y"], "position": [0.5, 0.5]}
+{"type": "OkayResponse", "msg": "ok"}
+{"type": "ErrorResponse", "msg": "error"}
+{"type": "ShutdownMessage", "msg": "shutdown"}

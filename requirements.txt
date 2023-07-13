@@ -1,0 +1,15 @@
+numpy
+scikit-learn
+scipy
+h5py
+matplotlib
+pyzmq
+pydantic
+pandas
+xarray
+ipython
+jupyter
+gpytorch
+torch
+torchvision
+torchaudio
