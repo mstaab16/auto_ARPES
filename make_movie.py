@@ -13,7 +13,6 @@ data = data['ARPES'][:len(positions_measured)].values
 counts = data.sum(axis=1).sum(axis=1)
 from PIL import Image
 
-
 def fig_to_pil(fig):
     fig.canvas.draw()
     return Image.frombytes('RGB', fig.canvas.get_width_height(),fig.canvas.tostring_rgb())

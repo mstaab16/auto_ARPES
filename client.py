@@ -13,8 +13,8 @@ class FakeEndstation:
         self.socket.connect(addr)
         self.x = 0
         self.y = 0
-        # self.crystal = FakeVoronoiCrystal()
-        self.crystal = FakeGrapheneCrystal()
+        self.crystal = FakeVoronoiCrystal()
+        # self.crystal = FakeGrapheneCrystal()
         self.measured_positions = []
 
     def send_message(self, message):
@@ -35,7 +35,7 @@ class FakeEndstation:
         return self.send_message(message)
 
     def experiment_loop(self):
-        for i in range(500):
+        for i in range(200):
             print("_"*10 + f"Measurement {i}" + "_"*10)
             print("Querying position")
             new_x, new_y = self.query_position().position
@@ -58,7 +58,8 @@ if __name__ == "__main__":
         SearchAxis(name="y", min=min_y, max=max_y, step=(max_y-min_y)/91)
         ]
     data_formats=[
-        DataFormat(name='ARPES', dtype='float32', shape=[259,232], offset=[0,0], delta=[1,1]),
+        #DataFormat(name='ARPES', dtype='float32', shape=[259,232], offset=[0,0], delta=[1,1]),
+        DataFormat(name='ARPES', dtype='float32', shape=[128,128], offset=[0,0], delta=[1,1]),
         ]
 
     endstation.begin_experiment(search_axes, data_formats)

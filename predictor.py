@@ -81,9 +81,13 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 
-def fit(train_x, train_y):
-    likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=2)
-    model = MultitaskGPModel(train_x, train_y, likelihood)
+def fit(model, likelihood, train_x, train_y):
+    if model is None:
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=2)
+        model = MultitaskGPModel(train_x, train_y, likelihood)
+    else:
+        model.set_train_data(train_x, train_y, strict=False)
+
     # Find optimal model hyperparameters
     model.train()
     likelihood.train()

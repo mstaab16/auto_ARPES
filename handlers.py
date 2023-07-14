@@ -4,11 +4,11 @@ import numpy as np
 import xarray as xr
 from queue import PriorityQueue
 import torch
-import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_samples, silhouette_score
+from sklearn.metrics import silhouette_score
 import pickle
+from ripser import ripser
 
 from predictor import fit, choose_next_position
 
@@ -17,14 +17,16 @@ class Experiment:
         print(initalization)
         self.data_formats = initalization.data_formats
         self.search_axes = initalization.search_axes
-        num_points_possible = np.prod([int((axis.max - axis.min) / axis.step) for axis in self.search_axes])
+        self.num_points_possible = 500#  np.prod([int((axis.max - axis.min) / axis.step) for axis in self.search_axes])
         self.num_points_taken = 0
-        self.max_n_clusters_so_far = 6
+        self.model = None
+        self.likelihood = None
+        self.min_n_clusters = 6
         self.max_n_clusters = 6
         self.data = xr.Dataset()
         for data_format in self.data_formats:
             self.data[data_format.name] = xr.DataArray(
-                    np.zeros([num_points_possible] + data_format.shape, dtype=data_format.dtype),
+                    np.zeros([self.num_points_possible] + data_format.shape, dtype=data_format.dtype),
                     dims=["point"] + [f"dim{i}" for i in range(len(data_format.shape))],
                     )
 
@@ -119,7 +121,7 @@ class Experiment:
         #    return OkayResponse()   
         raw_data =  self.data["ARPES"].values[:self.num_points_taken].reshape(self.num_points_taken, -1)
         self.dim_reduced_data = self.reduce_dimensions(raw_data)
-        self.data_labels = self.cluster_data(self.dim_reduced_data)
+        self.data_labels = self.cluster_data()
         self.predicted_move = self.predict_move(raw_data.sum(axis=1), self.data_labels, self.positions_measured)
         print('adding move to queue')
         self.move_queue.put((1, [axis.name for axis in self.search_axes], self.predicted_move))
@@ -130,56 +132,83 @@ class Experiment:
         #return data
         #data = (data.T/data.sum(axis=1)).T
         pca = PCA(0.8)
-        pca.fit(data)
-        return pca.transform(data)
+        return pca.fit_transform(data)
+
+    def detect_persistant_features(self, deaths):
+        death_derivs = np.diff(deaths, append=deaths[-1]*2)
+        mask = np.zeros(len(death_derivs), dtype=bool)
+        rolling_cutoff = np.zeros(len(death_derivs))
+        for i, death_deriv in enumerate(death_derivs):
+            if i<3:#i < 0.95*len(death_derivs):
+                rolling_cutoff[i] = 0
+                continue
+            cutoff = np.quantile(death_derivs[:i], 0.999)
+            rolling_cutoff[i] = cutoff
+            if death_deriv > rolling_cutoff[i-1]:
+                mask[i] = True
+        return np.arange(len(death_derivs))[mask], rolling_cutoff
     
-    def index_of_max_sil_score_k(self, list_of_label_lists):
-        silhouette_scores = []
-        for labels in list_of_label_lists:
-            silhouette_scores.append(silhouette_score(self.dim_reduced_data, labels))
-        return np.argmax(silhouette_scores)
+    def reasonable_numbers_of_clusters(self):
+        dgm = ripser(self.dim_reduced_data,0)['dgms'][0]
+        deaths = dgm[:,1]
+        steep_indices, _ = self.detect_persistant_features(deaths)
+        possible_cluster_values = len(deaths)-steep_indices+1
+        possible_cluster_values = possible_cluster_values[possible_cluster_values < self.max_n_clusters]
+        possible_cluster_values = possible_cluster_values[possible_cluster_values > self.min_n_clusters]
+        return possible_cluster_values
 
-    def cluster_data(self, data):
+    def cluster_data(self):
         print('clustering data')
-        if data.shape[0] < 10 + self.max_n_clusters:
-            n_clusters = min(2,data.shape[0])
-            kmeans = KMeans(n_clusters=n_clusters, n_init=10).fit(data)
-            self.cluster_label_history.append(kmeans.labels_)
-            print(f"{n_clusters} clusters")
-            return kmeans.labels_
-        else:
-            list_of_cluster_labels = []
-            list_of_k = []
-            for k in range(self.max_n_clusters_so_far, self.max_n_clusters + 1):
-                kmeans = KMeans(n_clusters=k, n_init=10).fit(data)
-                list_of_cluster_labels.append(kmeans.labels_)
-                list_of_k.append(k)
-            best_index = self.index_of_max_sil_score_k(list_of_cluster_labels)
-            n_clusters = list_of_k[best_index]
-            if n_clusters > self.max_n_clusters_so_far:
-                print(f"New best silhouete score. Now using {n_clusters}-{self.max_n_clusters} clusters.")
-                self.measurements_since_last_outlier.append(self.measurements_since_last_outlier[-1]+1)
-                self.max_n_clusters_so_far = n_clusters
-            else:
-                self.measurements_since_last_outlier.append(0)
-            self.cluster_label_history.append(list_of_cluster_labels[best_index])
-            print(f"{n_clusters} clusters")
-            return list_of_cluster_labels[best_index]
+        if self.num_points_taken < max(10, self.min_n_clusters):
+            cluster_labels = np.zeros(self.num_points_taken, dtype=int)
+            self.cluster_label_history.append(cluster_labels)
+            return cluster_labels
+        
+        list_of_k = self.reasonable_numbers_of_clusters()
+        list_of_cluster_labels = []
+        for k in list_of_k:
+            kmeans = KMeans(n_clusters=k, n_init=10).fit(self.dim_reduced_data)
+            list_of_cluster_labels.append(kmeans.labels_)
+        silhouette_scores = []
+        for labels in list_of_cluster_labels:
+            silhouette_scores.append(silhouette_score(self.dim_reduced_data, labels))
+        best_index = np.argmax(silhouette_scores)
+        self.cluster_label_history.append(list_of_cluster_labels[best_index])
+        return list_of_cluster_labels[best_index]
 
-#TODO: track number of iterations since new cluster was needed 
-#       (by silhouete score) and fit a poisson then set 
-#       cutoff for when we can stopo
+        # if data.shape[0] < 10 + self.max_n_clusters:
+        #     n_clusters = min(2,data.shape[0])
+        #     kmeans = KMeans(n_clusters=n_clusters, n_init=10).fit(data)
+        #     self.cluster_label_history.append(kmeans.labels_)
+        #     print(f"{n_clusters} clusters")
+        #     return kmeans.labels_
+        # else:
+        #     list_of_cluster_labels = []
+        #     list_of_k = []
+        #     for k in range(self.max_n_clusters_so_far, self.max_n_clusters + 1):
+        #         kmeans = KMeans(n_clusters=k, n_init=10).fit(data)
+        #         list_of_cluster_labels.append(kmeans.labels_)
+        #         list_of_k.append(k)
+        #     best_index = self.index_of_max_sil_score_k(list_of_cluster_labels)
+        #     n_clusters = list_of_k[best_index]
+        #     if n_clusters > self.max_n_clusters_so_far:
+        #         print(f"New best silhouete score. Now using {n_clusters}-{self.max_n_clusters} clusters.")
+        #         self.measurements_since_last_outlier.append(self.measurements_since_last_outlier[-1]+1)
+        #         self.max_n_clusters_so_far = n_clusters
+        #     else:
+        #         self.measurements_since_last_outlier.append(0)
+        #     self.cluster_label_history.append(list_of_cluster_labels[best_index])
+        #     print(f"{n_clusters} clusters")
+        #     return list_of_cluster_labels[best_index]
 
     def predict_move(self, counts, data_labels, positions_measured):
         print('predicting move')
         labels = np.array([counts,data_labels],dtype=np.float32).T
-        model, likelihood = fit(torch.tensor(positions_measured), torch.tensor(labels))
-        next_i, _ =  choose_next_position(model, likelihood, self.test_x, positions_measured)
+        self.model, self.likelihood = fit(self.model, self.likelihood, torch.tensor(positions_measured[-1]).reshape(1,2), torch.tensor(labels[-1]).reshape(1,2))
+        next_i, _ =  choose_next_position(self.model, self.likelihood, self.test_x, positions_measured)
         return self.test_x[next_i].numpy().tolist()
         
 
-
-        return [np.random.uniform(axis.min, axis.max) for axis in self.search_axes]
 
 
 
