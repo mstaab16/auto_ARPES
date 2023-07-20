@@ -1,5 +1,7 @@
 numpy
 scikit-learn
+scikit-image
+Ripser
 scipy
 h5py
 matplotlib

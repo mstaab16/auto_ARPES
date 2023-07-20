@@ -1,11 +1,16 @@
 *.h5
+*.fits
 *.mp4
 *.png
 *.gif
 venv/
+venv.nosync/
 movie/
 *.nc
 *.pkl
+
+.DS_Store
+*.icloud
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

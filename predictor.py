@@ -1,3 +1,4 @@
+from numpy.random import choice
 import torch
 import numpy as np
 import gpytorch
@@ -17,8 +18,9 @@ class DirichletGPModel(ExactGP):
 #             RBFKernel(batch_shape=torch.Size((num_classes,))),
 #             grid_size=50, num_dims=2, grid_bounds=((-3, 3), (-3, 3)),
 #         )
-    def __init__(self, train_x, train_y, likelihood, num_classes):
+    def __init__(self, train_x, train_y, likelihood):
         super(DirichletGPModel, self).__init__(train_x, train_y, likelihood)
+        num_classes = train_y.shape[1]
         self.mean_module = ConstantMean(batch_shape=torch.Size((num_classes,)))
         self.covar_module = ScaleKernel(
             RBFKernel(batch_shape=torch.Size((num_classes,))),
@@ -34,8 +36,9 @@ class DirichletGPModel(ExactGP):
 def Drichlet_fit(train_x, train_y):
     # initialize likelihood and model
     # we let the DirichletClassificationLikelihood compute the targets for us
-    likelihood = DirichletClassificationLikelihood(train_y.flatten(), learn_additional_noise=True)
-    model = DirichletGPModel(train_x, likelihood.transformed_targets, likelihood, num_classes=likelihood.num_classes)
+    # likelihood = DirichletClassificationLikelihood(train_y.flatten(), learn_additional_noise=True)
+    likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=train_y.shape[1])
+    model = DirichletGPModel(train_x, train_y, likelihood)
     training_iter = 50
 
     # Find optimal model hyperparameters
@@ -54,7 +57,7 @@ def Drichlet_fit(train_x, train_y):
         # Output from model
         output = model(train_x)
         # Calc loss and backprop gradients
-        loss = -mll(output, likelihood.transformed_targets).sum()
+        loss = -mll(output, train_y)
         loss.backward()
         optimizer.step()
 
@@ -69,10 +72,10 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.MultitaskMean(
-            gpytorch.means.ConstantMean(), num_tasks=2
+            gpytorch.means.ConstantMean(), num_tasks=train_y.shape[1]
         )
         self.covar_module = gpytorch.kernels.MultitaskKernel(
-            gpytorch.kernels.RBFKernel(), num_tasks=2, rank=1
+            gpytorch.kernels.RBFKernel(), num_tasks=train_y.shape[1], rank=1
         )
 
     def forward(self, x):
@@ -81,11 +84,15 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 
-def fit(model, likelihood, train_x, train_y):
-    if model is None:
-        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=2)
+def fit(model, likelihood, train_x, train_y, reset=True):
+    if reset:
+        print("Resetting GP")
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=train_y.shape[1])
         model = MultitaskGPModel(train_x, train_y, likelihood)
     else:
+        print("Updating previous GP ********")
+        train_x = train_x[-1].reshape(1,2)
+        train_y = train_y[-1].reshape(1,train_y.shape[1])
         model.set_train_data(train_x, train_y, strict=False)
 
     # Find optimal model hyperparameters
@@ -116,20 +123,23 @@ def fit(model, likelihood, train_x, train_y):
 
 
 def measured_vs_pos_test(measured_positions, test_pos):
-    return (np.sqrt((np.array(measured_positions)[:,0] - test_pos[0])**2 + (np.array(measured_positions)[:,1] - test_pos[1])**2) < 0.1).any()
+    return (np.sqrt((np.array(measured_positions)[:,0] - test_pos[0])**2 + (np.array(measured_positions)[:,1] - test_pos[1])**2) < 0.0).any()
 
 def choose_next_position(model, likelihood, test_x, measured_positions):
     test_dist = model(test_x)
-    g = 0.25
+    g = 0.5
 
     means = test_dist.mean[:,0].detach().numpy()
-    means = means/means.sum()
-    stddevs = likelihood(test_dist).stddev[:,1].detach().numpy()
-    stddevs = stddevs/stddevs.sum()
+    means -= means.min()
+    means /= means.max()
+    stddevs = likelihood(test_dist).stddev[:,1:].detach().numpy().prod(axis=1)
+    stddevs -= stddevs.min()
+    stddevs /= stddevs.max()
     choice_pdf = g * means + (1 - g) * stddevs
     choice_pdf = choice_pdf/choice_pdf.sum()
 
-    least_certain_test_index = np.random.choice(np.arange(choice_pdf.shape[0]),p=choice_pdf.flatten())
+    #least_certain_test_index = np.random.choice(np.arange(choice_pdf.shape[0]),p=choice_pdf.flatten())
+    least_certain_test_index = np.argmax(choice_pdf.flatten())
 
 #     if measured_vs_pos_test(measured_positions, test_x[least_certain_test_index].numpy()):
 #         for i in np.argsort(choice_pdf.flatten())[::-1]:
@@ -139,12 +149,27 @@ def choose_next_position(model, likelihood, test_x, measured_positions):
 #                 least_certain_test_index = i
 #                 break
 
-#     fig, (ax1,ax2,ax3) = plt.subplots(1,3,figsize=(15,5))
-#     ax1.imshow(stddevs.reshape(91,91), origin='lower', cmap='terrain')
-#     ax2.imshow(means.reshape(91,91), origin='lower', cmap='terrain')
-#     ax3.imshow(choice_pdf.reshape(91,91), origin='lower', cmap='terrain')
-#     ax3.scatter(least_certain_test_index%91, least_certain_test_index//91, color='red')
-#     plt.show()
+    PLOT = True
+    if PLOT:
+        fig, (ax1,ax2,ax3) = plt.subplots(1,3,figsize=(15,5))
+        ax1.set_title(f'stddevs * {1-g:.2f}')
+        ax1.imshow(stddevs.reshape(91,91), origin='lower', cmap='terrain')
+        ax2.set_title(f'means * {g:.2f}')
+        ax2.imshow(means.reshape(91,91), origin='lower', cmap='terrain')
+        ax3.set_title(f'= choice pdf')
+        ax3.imshow(choice_pdf.reshape(91,91), origin='lower', cmap='terrain')
+        scaled_x = np.array(measured_positions)[:,0]
+        scaled_x -= scaled_x.min()
+        scaled_x /= scaled_x.max()
+        scaled_x *= 90
+        scaled_y = np.array(measured_positions)[:,1]
+        scaled_y -= scaled_y.min()
+        scaled_y /= scaled_y.max()
+        scaled_y *= 90
+        ax3.scatter(scaled_x, scaled_y, c='k', s=1)
+        ax3.scatter(least_certain_test_index%91, least_certain_test_index//91, color='red')
+        plt.show()
+
     return least_certain_test_index, choice_pdf
 
 

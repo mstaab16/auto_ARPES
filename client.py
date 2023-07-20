@@ -2,7 +2,8 @@ import zmq
 from messages import *
 import numpy as np
 import matplotlib.pyplot as plt
-from fake_crystals import FakeGrapheneCrystal, FakeVoronoiCrystal
+from fake_crystals import FakeGrapheneCrystal, FakeVoronoiCrystal, FakeWSe2Crystal
+from time import perf_counter
 
 context = zmq.Context()
 
@@ -15,6 +16,7 @@ class FakeEndstation:
         self.y = 0
         self.crystal = FakeVoronoiCrystal()
         # self.crystal = FakeGrapheneCrystal()
+        # self.crystal = FakeWSe2Crystal()
         self.measured_positions = []
 
     def send_message(self, message):
@@ -35,8 +37,9 @@ class FakeEndstation:
         return self.send_message(message)
 
     def experiment_loop(self):
-        for i in range(200):
-            print("_"*10 + f"Measurement {i}" + "_"*10)
+        start = perf_counter()
+        for i in range(500):
+            print("_"*10 + f"Measurement {i} " + f"Time ellapsed {(perf_counter()-start)/60:.2f} min" +"_"*10)
             print("Querying position")
             new_x, new_y = self.query_position().position
             if new_x != self.x or new_y != self.y:
@@ -54,8 +57,8 @@ if __name__ == "__main__":
     endstation = FakeEndstation()
     min_x, max_x, min_y, max_y = endstation.crystal.get_boundaries()
     search_axes=[
-        SearchAxis(name="x", min=min_x, max=max_x, step=(max_x-min_x)/91),
-        SearchAxis(name="y", min=min_y, max=max_y, step=(max_y-min_y)/91)
+        SearchAxis(name="x", min=min_x, max=max_x, step=0.01),
+        SearchAxis(name="y", min=min_y, max=max_y, step=0.01)
         ]
     data_formats=[
         #DataFormat(name='ARPES', dtype='float32', shape=[259,232], offset=[0,0], delta=[1,1]),

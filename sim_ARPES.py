@@ -128,7 +128,7 @@ def pure_spectral_weight(kx, ky, temperature = 30,
     fermi = fermi_function(temperature, energies)
     fermi = np.tile(fermi, (len(kx),1))
     # multiply the spectral weight by the fermi function
-    spectral_weight = gaussian_filter(spectral_weight, sigma = 3)
+    spectral_weight = gaussian_filter(spectral_weight, sigma = 1)
     spectral_weight = spectral_weight*fermi
     #spectral_weight *= fermi_function(energies[j])
 
@@ -158,7 +158,7 @@ def simulate_ARPES_measurement(polar=0.0, tilt=0.0, azimuthal=0.0,
     ky *= r
     kz *= r
     spectrum = pure_spectral_weight(kx, ky, temperature=temperature, k_resolution=k_resolution, e_resolution=e_resolution, energy_range=energy_range, num_energies=num_energies, noise_level=noise_level)
-    return spectrum
+    return spectrum/spectrum.max()
 
 if __name__ == "__main__":
     sender = imagezmq.ImageSender(connect_to='tcp://localhost:5432')

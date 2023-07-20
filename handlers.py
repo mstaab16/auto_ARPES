@@ -1,4 +1,3 @@
-from gpytorch.likelihoods import likelihood
 from messages import *
 import numpy as np
 import xarray as xr
@@ -7,22 +6,42 @@ import torch
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from skimage.transform import resize
 import pickle
 from ripser import ripser
 
 from predictor import fit, choose_next_position
+from predictor import *
+
+
+def find_unique_point_for_cluster(position_arr):
+    mean_position = np.mean(position_arr, axis=0)
+    positions_minus_mean = position_arr - mean_position
+    distances = np.linalg.norm(positions_minus_mean, axis=1)
+    return position_arr[np.argmin(distances)]
+
+def main():
+    pass
+
+if __name__ == '__main__':
+    main()
+
+
 
 class Experiment:
     def __init__(self, initalization):
         print(initalization)
+        self.resize_data = True
         self.data_formats = initalization.data_formats
         self.search_axes = initalization.search_axes
         self.num_points_possible = 500#  np.prod([int((axis.max - axis.min) / axis.step) for axis in self.search_axes])
         self.num_points_taken = 0
         self.model = None
         self.likelihood = None
-        self.min_n_clusters = 6
-        self.max_n_clusters = 6
+        self.previous_n_clusters = 2
+        self.current_n_clusters = 2
+        self.min_n_clusters = 4
+        self.max_n_clusters = 4
         self.data = xr.Dataset()
         for data_format in self.data_formats:
             self.data[data_format.name] = xr.DataArray(
@@ -44,7 +63,6 @@ class Experiment:
         self.cluster_label_history = []
         self.current_position = []
         self.measurements_since_last_outlier = [0]
-
 
         test_d1 = np.linspace(self.search_axes[0].min, self.search_axes[0].max, 91)
         test_d2 = np.linspace(self.search_axes[1].min, self.search_axes[1].max, 91)
@@ -97,10 +115,8 @@ class Experiment:
         data = np.array(message.data)
         format_name = message.format_name
         self.data[format_name][self.num_points_taken] = data.T
-
         self.num_points_taken += 1
         # self.image_sender.send_image(format_name, data)
-        
         prediction_response = self.predict_new_move()
 
         return prediction_response
@@ -129,7 +145,7 @@ class Experiment:
 
     def reduce_dimensions(self, data):
         print('reducing dimensions')
-        #return data
+        return data
         #data = (data.T/data.sum(axis=1)).T
         pca = PCA(0.8)
         return pca.fit_transform(data)
@@ -159,12 +175,16 @@ class Experiment:
 
     def cluster_data(self):
         print('clustering data')
-        if self.num_points_taken < max(10, self.min_n_clusters):
+        self.previous_n_clusters = self.current_n_clusters
+        if self.num_points_taken < max(10, self.min_n_clusters+5):
             cluster_labels = np.zeros(self.num_points_taken, dtype=int)
             self.cluster_label_history.append(cluster_labels)
             return cluster_labels
         
-        list_of_k = self.reasonable_numbers_of_clusters()
+        if self.min_n_clusters == self.max_n_clusters:
+            list_of_k = [self.min_n_clusters]
+        else:
+            list_of_k = self.reasonable_numbers_of_clusters()
         list_of_cluster_labels = []
         for k in list_of_k:
             kmeans = KMeans(n_clusters=k, n_init=10).fit(self.dim_reduced_data)
@@ -174,45 +194,42 @@ class Experiment:
             silhouette_scores.append(silhouette_score(self.dim_reduced_data, labels))
         best_index = np.argmax(silhouette_scores)
         self.cluster_label_history.append(list_of_cluster_labels[best_index])
+        self.current_n_clusters = list_of_k[best_index]
         return list_of_cluster_labels[best_index]
 
-        # if data.shape[0] < 10 + self.max_n_clusters:
-        #     n_clusters = min(2,data.shape[0])
-        #     kmeans = KMeans(n_clusters=n_clusters, n_init=10).fit(data)
-        #     self.cluster_label_history.append(kmeans.labels_)
-        #     print(f"{n_clusters} clusters")
-        #     return kmeans.labels_
-        # else:
-        #     list_of_cluster_labels = []
-        #     list_of_k = []
-        #     for k in range(self.max_n_clusters_so_far, self.max_n_clusters + 1):
-        #         kmeans = KMeans(n_clusters=k, n_init=10).fit(data)
-        #         list_of_cluster_labels.append(kmeans.labels_)
-        #         list_of_k.append(k)
-        #     best_index = self.index_of_max_sil_score_k(list_of_cluster_labels)
-        #     n_clusters = list_of_k[best_index]
-        #     if n_clusters > self.max_n_clusters_so_far:
-        #         print(f"New best silhouete score. Now using {n_clusters}-{self.max_n_clusters} clusters.")
-        #         self.measurements_since_last_outlier.append(self.measurements_since_last_outlier[-1]+1)
-        #         self.max_n_clusters_so_far = n_clusters
-        #     else:
-        #         self.measurements_since_last_outlier.append(0)
-        #     self.cluster_label_history.append(list_of_cluster_labels[best_index])
-        #     print(f"{n_clusters} clusters")
-        #     return list_of_cluster_labels[best_index]
-
     def predict_move(self, counts, data_labels, positions_measured):
+        print('predicting move')
+        print(f'{np.max(data_labels)+1=} == {self.previous_n_clusters=}: {np.max(data_labels)+1 == self.previous_n_clusters}')
+        ordered_data_labels = np.zeros(data_labels.shape, dtype=int)
+        if np.max(data_labels)+1 == self.previous_n_clusters and self.num_points_taken > 3 and self.model is not None:
+            reset = False
+            for correct_label, position in self.label_to_unique_points.items():
+                wrong_label = data_labels[np.argmin(np.linalg.norm(np.asarray(positions_measured)-np.asarray(position), axis=1))]
+                ordered_data_labels[np.where(data_labels==wrong_label)] = correct_label
+                print(f'{wrong_label=} -> {correct_label=}')
+            if not np.array_equal(np.unique(ordered_data_labels), np.unique(data_labels)):
+                reset = True
+
+        else:
+            reset = True
+            ordered_data_labels = data_labels
+            self.label_to_unique_points = dict()
+            for label in np.unique(data_labels):
+                positions_of_that_cluster = np.asarray(positions_measured)[np.where(data_labels == label)]
+                self.label_to_unique_points[label] = find_unique_point_for_cluster(positions_of_that_cluster)
+
+        labels = np.zeros((ordered_data_labels.shape[0], np.max(data_labels)+2), dtype=np.float32)
+        labels[:, 1+data_labels] = 1
+        labels[:, 0] = counts
+        self.model, self.likelihood = fit(self.model, self.likelihood, torch.tensor(positions_measured), torch.tensor(labels), reset=reset)
+        next_i, _ =  choose_next_position(self.model, self.likelihood, self.test_x, positions_measured)
+        return self.test_x[next_i].numpy().tolist()
+
+    def predict_move_one_at_a_time(self, counts, data_labels, positions_measured):
         print('predicting move')
         labels = np.array([counts,data_labels],dtype=np.float32).T
         self.model, self.likelihood = fit(self.model, self.likelihood, torch.tensor(positions_measured[-1]).reshape(1,2), torch.tensor(labels[-1]).reshape(1,2))
         next_i, _ =  choose_next_position(self.model, self.likelihood, self.test_x, positions_measured)
         return self.test_x[next_i].numpy().tolist()
-        
-
-
-
-
-
-
 
 

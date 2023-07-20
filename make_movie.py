@@ -56,17 +56,21 @@ imgs = []
 num = len(positions_measured)
 # for i in range(4,num+1):
 for i in range(1,num+1):
-#     counts_grid = griddata(positions_measured[:i], counts[:i], (xgrid, ygrid), method='cubic')
-#     counts_grid -= np.nanmin(counts_grid)
-#     counts_grid /= np.nanmax(counts_grid)
-#     counts_grid = np.nan_to_num(counts_grid)
-#     fig, (ax1,ax2,ax3) = plt.subplots(1,3, figsize=(15,5))
-    fig, (ax1,ax3) = plt.subplots(1,2, figsize=(10,5))
+    if i < 4:
+        counts_grid = np.zeros(xgrid.shape)
+    else:
+        counts_grid = griddata(positions_measured[:i], counts[:i], (xgrid, ygrid), method='cubic')
+        counts_grid -= np.nanmin(counts_grid)
+        counts_grid /= np.nanmax(counts_grid)
+        counts_grid = np.nan_to_num(counts_grid)
+    fig, (ax1,ax2,ax3) = plt.subplots(1,3, figsize=(15,5))
+    fig.suptitle(f'Measurement: {i}    Number of Clusters: {1+max(set(cluster_label_history[i-1]))}')
+#     fig, (ax1,ax3) = plt.subplots(1,2, figsize=(10,5))
     labels_ordered = order_cluster_labels_by_counts(positions_measured, cluster_label_history[i-1], counts)
     label_nearest_matrix = np.round(griddata(np.array(positions_measured[:i]), labels_ordered, (xgrid, ygrid), method='nearest'))
     ax1.imshow(label_nearest_matrix, extent=[minx,maxx,miny,maxy], origin='lower', cmap='tab20')
     ax1.scatter(*np.array(positions_measured[:i]).T, marker='x', c='k', s=1)
-#     ax2.imshow(label_nearest_matrix, alpha=counts_grid, extent=[minx,maxx,miny,maxy], origin='lower', cmap='tab20')
+    ax2.imshow(counts_grid, extent=[minx,maxx,miny,maxy], origin='lower', cmap='gray_r')
 #     ax2.scatter(*np.array(positions_measured[:i]).T, marker='x', c='k', s=1)
     ax3.imshow(data[i-1], origin='lower', cmap='gray_r')
 #     imgs.append(fig_to_pil(fig))
