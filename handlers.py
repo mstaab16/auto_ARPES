@@ -40,8 +40,8 @@ class Experiment:
         self.likelihood = None
         self.previous_n_clusters = 2
         self.current_n_clusters = 2
-        self.min_n_clusters = 4
-        self.max_n_clusters = 4
+        self.min_n_clusters = 5
+        self.max_n_clusters = 5
         self.data = xr.Dataset()
         for data_format in self.data_formats:
             self.data[data_format.name] = xr.DataArray(
@@ -64,10 +64,11 @@ class Experiment:
         self.current_position = []
         self.measurements_since_last_outlier = [0]
 
-        test_d1 = np.linspace(self.search_axes[0].min, self.search_axes[0].max, 91)
-        test_d2 = np.linspace(self.search_axes[1].min, self.search_axes[1].max, 91)
+        test_d1 = np.linspace(self.search_axes[0].min, self.search_axes[0].max, 300, dtype=np.float32)
+        test_d2 = np.linspace(self.search_axes[1].min, self.search_axes[1].max, 300, dtype=np.float32)
         test_d1, test_d2 = np.meshgrid(test_d1, test_d2)
-        self.test_x = torch.tensor(np.array([test_d1.ravel(), test_d2.ravel()]).T, dtype=torch.float)
+        self.test_x = torch.tensor(np.array([test_d1.ravel(), test_d2.ravel()]).T)
+        
 
         #self.image_sender = imagezmq.ImageSender(connect_to="tcp://localhost:5551")
 
@@ -200,30 +201,34 @@ class Experiment:
     def predict_move(self, counts, data_labels, positions_measured):
         print('predicting move')
         print(f'{np.max(data_labels)+1=} == {self.previous_n_clusters=}: {np.max(data_labels)+1 == self.previous_n_clusters}')
-        ordered_data_labels = np.zeros(data_labels.shape, dtype=int)
-        if np.max(data_labels)+1 == self.previous_n_clusters and self.num_points_taken > 3 and self.model is not None:
-            reset = False
-            for correct_label, position in self.label_to_unique_points.items():
-                wrong_label = data_labels[np.argmin(np.linalg.norm(np.asarray(positions_measured)-np.asarray(position), axis=1))]
-                ordered_data_labels[np.where(data_labels==wrong_label)] = correct_label
-                print(f'{wrong_label=} -> {correct_label=}')
-            if not np.array_equal(np.unique(ordered_data_labels), np.unique(data_labels)):
-                reset = True
+        ordered_data_labels = data_labels.copy()
+        reset = True
+        # if np.max(data_labels)+1 == self.previous_n_clusters and self.num_points_taken > 3 and self.model is not None:
+        #     reset = False
+        #     print(f"{self.label_to_unique_points.keys()=}")
+        #     for correct_label, position in self.label_to_unique_points.items():
+        #         # wrong_label = data_labels[np.argmin(np.linalg.norm(np.asarray(positions_measured[data_labels==])-np.asarray(position), axis=1))]
+        #         wrong_label = data_labels[(np.asarray(positions_measured)==np.array(position)).all(axis=1)][0]
+        #         ordered_data_labels[data_labels==wrong_label] = correct_label
+        #         # print(f'{wrong_label=} -> {correct_label=}')
+        #     print(f"{np.unique(ordered_data_labels)=}, {np.unique(data_labels)=}")
+        #     if not np.array_equal(np.unique(ordered_data_labels), np.unique(data_labels)):
+        #         reset = True
 
-        else:
-            reset = True
-            ordered_data_labels = data_labels
-            self.label_to_unique_points = dict()
-            for label in np.unique(data_labels):
-                positions_of_that_cluster = np.asarray(positions_measured)[np.where(data_labels == label)]
-                self.label_to_unique_points[label] = find_unique_point_for_cluster(positions_of_that_cluster)
-
-        labels = np.zeros((ordered_data_labels.shape[0], np.max(data_labels)+2), dtype=np.float32)
-        labels[:, 1+data_labels] = 1
+        # if reset:
+        #     ordered_data_labels = data_labels
+        #     self.label_to_unique_points = dict()
+        #     for label in np.unique(data_labels):
+        #         positions_of_that_cluster = np.asarray(positions_measured)[np.where(data_labels == label)]
+        #         self.label_to_unique_points[label] = find_unique_point_for_cluster(positions_of_that_cluster)
+        #     print(f"{self.label_to_unique_points=}")
+        # reset = True
+        labels = np.zeros((ordered_data_labels.shape[0], np.max(ordered_data_labels)+2), dtype=np.float32)
+        labels[:, 1+ordered_data_labels] = 1
         labels[:, 0] = counts
         self.model, self.likelihood = fit(self.model, self.likelihood, torch.tensor(positions_measured), torch.tensor(labels), reset=reset)
-        next_i, _ =  choose_next_position(self.model, self.likelihood, self.test_x, positions_measured)
-        return self.test_x[next_i].numpy().tolist()
+        next_x, _ =  choose_next_position(self.model, self.likelihood, self.test_x, positions_measured)
+        return next_x.tolist()
 
     def predict_move_one_at_a_time(self, counts, data_labels, positions_measured):
         print('predicting move')

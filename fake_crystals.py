@@ -27,9 +27,9 @@ class FakeVoronoiCrystal:
         num_energies = 128
         # if np.abs(x) > 2 or np.abs(y) > 2:
         
-        if False:#not((np.abs(x-1.5)**2 + np.abs(y+1.5)**2 < 1) or\
-               #(x>-2.75 and x<-1 and y>-2 and y<2) or\
-                #(np.abs(x-1.5)**2 + np.abs(y-1.5)**2 < 2)):
+        if not((np.abs(x-1.5)**2 + np.abs(y+1.5)**2 < 1) or\
+                (x>-2.75 and x<-1 and y>-2 and y<2) or\
+                (np.abs(x-1.5)**2 + np.abs(y-1.5)**2 < 2)):
             return x, y, np.random.exponential(0.001,(num_energies, num_angles))
 
         dx_sq = (self.vor.points[:,0] - x)**2

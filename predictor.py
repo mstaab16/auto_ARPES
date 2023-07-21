@@ -85,6 +85,18 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
 
 
 def fit(model, likelihood, train_x, train_y, reset=True):
+    print("Fitting GP")
+    indices = np.arange(train_x.shape[0])
+    # max(int(np.ceil(train_x.shape[0]*0.2)), min(train_x.shape[0], 100))
+    # print(min(train_x.shape[0], min(100,int(np.ceil(train_x.shape[0]*0.2)))))
+    indices = np.random.choice(indices, size=min(train_x.shape[0], 1000), replace=False)
+    train_x = train_x[indices]
+    train_y = train_y[indices]
+    if torch.cuda.is_available():
+        train_x = train_x.cuda()
+        train_y = train_y.cuda()
+
+    # reset = True
     if reset:
         print("Resetting GP")
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=train_y.shape[1])
@@ -94,6 +106,10 @@ def fit(model, likelihood, train_x, train_y, reset=True):
         train_x = train_x[-1].reshape(1,2)
         train_y = train_y[-1].reshape(1,train_y.shape[1])
         model.set_train_data(train_x, train_y, strict=False)
+    
+    if torch.cuda.is_available():
+        model = model.cuda()
+        likelihood = likelihood.cuda()
 
     # Find optimal model hyperparameters
     model.train()
@@ -106,7 +122,7 @@ def fit(model, likelihood, train_x, train_y, reset=True):
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     
     training_iterations = 50
-
+    print("Training GP")
     for i in range(training_iterations):
         optimizer.zero_grad()
         output = model(train_x)
@@ -126,13 +142,18 @@ def measured_vs_pos_test(measured_positions, test_pos):
     return (np.sqrt((np.array(measured_positions)[:,0] - test_pos[0])**2 + (np.array(measured_positions)[:,1] - test_pos[1])**2) < 0.0).any()
 
 def choose_next_position(model, likelihood, test_x, measured_positions):
+    print("Choosing next position")
+    test_x = test_x[np.random.choice(np.arange(test_x.shape[0]), size=1000, replace=False)]
+    if torch.cuda.is_available():
+            test_x = test_x.cuda()
+
     test_dist = model(test_x)
     g = 0.5
 
-    means = test_dist.mean[:,0].detach().numpy()
+    means = test_dist.mean[:,0].detach().cpu().numpy()
     means -= means.min()
     means /= means.max()
-    stddevs = likelihood(test_dist).stddev[:,1:].detach().numpy().prod(axis=1)
+    stddevs = likelihood(test_dist).stddev[:,1:].detach().cpu().numpy().sum(axis=1)
     stddevs -= stddevs.min()
     stddevs /= stddevs.max()
     choice_pdf = g * means + (1 - g) * stddevs
@@ -141,15 +162,9 @@ def choose_next_position(model, likelihood, test_x, measured_positions):
     #least_certain_test_index = np.random.choice(np.arange(choice_pdf.shape[0]),p=choice_pdf.flatten())
     least_certain_test_index = np.argmax(choice_pdf.flatten())
 
-#     if measured_vs_pos_test(measured_positions, test_x[least_certain_test_index].numpy()):
-#         for i in np.argsort(choice_pdf.flatten())[::-1]:
-#             if measured_vs_pos_test(measured_positions, test_x[i].numpy()):
-#                 continue
-#             else:
-#                 least_certain_test_index = i
-#                 break
-
-    PLOT = True
+    PLOT = False
+    # if len(measured_positions) > 50:
+    #     PLOT = True
     if PLOT:
         fig, (ax1,ax2,ax3) = plt.subplots(1,3,figsize=(15,5))
         ax1.set_title(f'stddevs * {1-g:.2f}')
@@ -170,7 +185,7 @@ def choose_next_position(model, likelihood, test_x, measured_positions):
         ax3.scatter(least_certain_test_index%91, least_certain_test_index//91, color='red')
         plt.show()
 
-    return least_certain_test_index, choice_pdf
+    return test_x[least_certain_test_index].cpu().numpy(), choice_pdf
 
 
 def Dirichlet_choose_next_position(model, likelihood, test_x, measured_positions):
